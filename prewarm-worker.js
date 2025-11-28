@@ -14,7 +14,7 @@ const { URL } = require('url');
 
 // Arguments
 const JOB_ID = process.argv[2];
-const URL = process.argv[3];
+const MASTER_URL = process.argv[3];
 const PARALLEL = parseInt(process.argv[4] || '10', 10);
 
 // Paths
@@ -268,10 +268,10 @@ function stopProgressUpdater() {
 
 // Main
 async function main() {
-    log(`Starting prewarm: ${URL} (parallel: ${PARALLEL})`);
+    log(`Starting prewarm: ${MASTER_URL} (parallel: ${PARALLEL})`);
     
     // Collect URLs
-    const { urls, variants } = await collectUrls(URL);
+    const { urls, variants } = await collectUrls(MASTER_URL);
     stats.total = urls.length;
     
     log(`Found ${urls.length} unique URLs`);
