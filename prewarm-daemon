@@ -32,6 +32,8 @@ send_stats() {
     fi
     
     local id=$(grep -o '"id": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local job_id=$(grep -o '"job_id": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local slug=$(grep -o '"slug": "[^"]*"' "$job_file" | cut -d'"' -f4)
     local url=$(grep -o '"url": "[^"]*"' "$job_file" | cut -d'"' -f4)
     local total=$(grep -o '"total": [0-9]*' "$job_file" | awk '{print $2}')
     local hit=$(grep -o '"hit": [0-9]*' "$job_file" | awk '{print $2}')
@@ -48,14 +50,16 @@ send_stats() {
         auth_header="-H \"Authorization: Bearer $API_TOKEN\""
     fi
     
-    log "Sending stats for job $id to API"
+    log "Sending stats for job $id (job_id: $job_id) to API"
     
     # Send POST request with stats including cf_pops and variants
+    # API_ENDPOINT already includes full path like http://server:3100/prewarm
     curl -s -X POST "$API_ENDPOINT/complete" \
         -H "Content-Type: application/json" \
         $auth_header \
         -d "{
-            \"job_id\": \"$id\",
+            \"job_id\": \"${job_id:-$id}\",
+            \"slug\": \"${slug:-}\",
             \"url\": \"$url\",
             \"total\": ${total:-0},
             \"hit\": ${hit:-0},
@@ -80,10 +84,13 @@ fetch_queue_from_api() {
         auth_header="-H \"Authorization: Bearer $API_TOKEN\""
     fi
     
-    log "Fetching queue from API"
+    # Get server ID from hostname
+    local server_id=$(hostname)
     
-    # Fetch from API
-    local response=$(curl -s -X GET "$API_ENDPOINT/queue" \
+    log "Fetching queue from API (server: $server_id)"
+    
+    # Fetch from API - use /claim endpoint with server_id
+    local response=$(curl -s -X GET "$API_ENDPOINT/claim?server_id=$server_id&limit=$MAX_CONCURRENT" \
         -H "Content-Type: application/json" \
         $auth_header 2>/dev/null || echo "")
     
@@ -92,13 +99,14 @@ fetch_queue_from_api() {
     fi
     
     # Parse JSON array and add jobs
-    # Expected format: [{"id": "xxx", "parallel": 20}, ...]
+    # Expected format: [{"id": "xxx", "job_id": "xxx", "parallel": 20}, ...]
     echo "$response" | grep -oP '\{[^}]+\}' | while read -r job; do
-        local job_id=$(echo "$job" | grep -oP '"id"\s*:\s*"\K[^"]+')
+        local slug=$(echo "$job" | grep -oP '"id"\s*:\s*"\K[^"]+')
+        local job_id=$(echo "$job" | grep -oP '"job_id"\s*:\s*"\K[^"]+')
         local parallel=$(echo "$job" | grep -oP '"parallel"\s*:\s*\K[0-9]+')
         
-        if [ -n "$job_id" ] && [ -n "$BASE_DOMAIN" ]; then
-            local url="https://$BASE_DOMAIN/$job_id/playlist.m3u8"
+        if [ -n "$slug" ] && [ -n "$BASE_DOMAIN" ]; then
+            local url="https://$BASE_DOMAIN/$slug/playlist.m3u8"
             local internal_id=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
             local job_file="$QUEUE_DIR/$internal_id.job"
             
@@ -116,6 +124,8 @@ fetch_queue_from_api() {
                 cat > "$job_file" << EOF
 {
   "id": "$internal_id",
+  "job_id": "$job_id",
+  "slug": "$slug",
   "url": "$url",
   "parallel": ${parallel:-20},
   "status": "pending",
@@ -130,7 +140,7 @@ fetch_queue_from_api() {
   "completed": ""
 }
 EOF
-                log "Added job from API: $job_id -> $internal_id"
+                log "Added job from API: $slug -> $internal_id (job_id: $job_id)"
             fi
         fi
     done

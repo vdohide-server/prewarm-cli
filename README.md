@@ -72,6 +72,8 @@ prewarm setup
 ```bash
 # วิธีที่ 1: ใช้ ID (แนะนำ!)
 prewarm add h_A8yW-KTJql3
+prewarm add iu79w1rk5ua3714
+prewarm add l9qfjn7xpi
 # → https://media.vdohls.com/h_A8yW-KTJql3/playlist.m3u8
 
 # วิธีที่ 2: ใช้ URL เต็ม
