@@ -105,22 +105,23 @@ POP_FILE=$(mktemp)
 do_prewarm() {
     local url="$1"
     
-    # Extract variant from URL path (e.g., mz_SfNml-hUhP from /mz_SfNml-hUhP/video.m3u8)
-    # Match: /{variant_id}/something.ts or /{variant_id}/video.m3u8
+    # Extract variant from URL path
     local variant=$(echo "$url" | grep -oP '(?<=/)[^/]+(?=/[^/]+\.(ts|m3u8|jpeg))')
     [ -z "$variant" ] && variant="master"
     
     # HEAD request only - fast & no bandwidth
+    # Use --compressed and connection reuse hints
     local result=$(curl -s -I -4 \
-        --connect-timeout 5 \
-        --max-time $TIMEOUT \
+        --connect-timeout 3 \
+        --max-time 8 \
+        --tcp-fastopen \
+        -H "Connection: keep-alive" \
         -w "\n%{http_code}|%{time_total}" \
         "$url" 2>/dev/null)
     
     local last_line=$(echo "$result" | tail -1)
     local code="${last_line%%|*}"
     local time_sec="${last_line##*|}"
-    # แปลงเป็น ms โดยไม่ใช้ awk (เอาแค่ 3 ตำแหน่งแรกหลังจุด)
     local time_ms="${time_sec%%.*}$(echo "${time_sec#*.}" | cut -c1-3)"
     time_ms=$((10#${time_ms:-0}))
     
@@ -139,103 +140,128 @@ do_prewarm() {
     fi
 }
 
-# Background progress updater
+# Background progress updater (optimized - less frequent updates)
 (
     while [ -f "$JOB_FILE" ]; do
-        sleep 3
+        sleep 5
         [ -f "$STATS_FILE" ] || continue
+        [ -f "$JOB_FILE" ] || break
         
-        p=$(wc -l < "$STATS_FILE" 2>/dev/null | tr -d ' ')
-        h=$(grep -c "|HIT|" "$STATS_FILE" 2>/dev/null || echo 0)
-        m=$(grep -c "|MISS|" "$STATS_FILE" 2>/dev/null || echo 0)
-        e=$(grep -c "|EXPIRED|" "$STATS_FILE" 2>/dev/null || echo 0)
-        f=$(grep -c "^FAIL|" "$STATS_FILE" 2>/dev/null || echo 0)
+        # Use single awk call instead of multiple grep
+        stats=$(awk -F'|' '
+            BEGIN { ok=0; hit=0; miss=0; exp=0; fail=0 }
+            /^OK\|/ { ok++ }
+            /^FAIL\|/ { fail++ }
+            /\|HIT\|/ { hit++ }
+            /\|MISS\|/ { miss++ }
+            /\|EXPIRED\|/ { exp++ }
+            END { print ok+fail, hit, miss, exp, fail }
+        ' "$STATS_FILE" 2>/dev/null)
         
-        if [ -f "$JOB_FILE" ]; then
-            sed -i "s|\"progress\": [0-9]*|\"progress\": ${p}|" "$JOB_FILE" 2>/dev/null
-            sed -i "s|\"hit\": [0-9]*|\"hit\": ${h}|" "$JOB_FILE" 2>/dev/null
-            sed -i "s|\"miss\": [0-9]*|\"miss\": ${m}|" "$JOB_FILE" 2>/dev/null
-            sed -i "s|\"expired\": [0-9]*|\"expired\": ${e}|" "$JOB_FILE" 2>/dev/null
-            sed -i "s|\"failed\": [0-9]*|\"failed\": ${f}|" "$JOB_FILE" 2>/dev/null
+        read p h m e f <<< "$stats"
+        
+        if [ -f "$JOB_FILE" ] && [ -n "$p" ]; then
+            # Single sed call with multiple expressions
+            sed -i -e "s|\"progress\": [0-9]*|\"progress\": ${p:-0}|" \
+                   -e "s|\"hit\": [0-9]*|\"hit\": ${h:-0}|" \
+                   -e "s|\"miss\": [0-9]*|\"miss\": ${m:-0}|" \
+                   -e "s|\"expired\": [0-9]*|\"expired\": ${e:-0}|" \
+                   -e "s|\"failed\": [0-9]*|\"failed\": ${f:-0}|" \
+                   "$JOB_FILE" 2>/dev/null
         fi
     done
 ) &
 PROGRESS_PID=$!
 
-# Process URLs with controlled parallelism
-log "Pre-warming..."
+# Process URLs with controlled parallelism using xargs
+log "Pre-warming with $PARALLEL parallel connections..."
 
-# Use job control for parallel execution
-exec 3< "$URLS_FILE"
-running=0
+export -f do_prewarm
+export STATS_FILE POP_FILE TIMEOUT JOB_FILE
 
-while read -r url <&3; do
-    [ -z "$url" ] && continue
-    
-    do_prewarm "$url" &
-    ((running++))
-    
-    # Wait if at parallel limit
-    if [ $running -ge $PARALLEL ]; then
-        wait -n 2>/dev/null || wait
-        ((running--))
-    fi
-done
+# Use xargs for efficient parallel execution (much lower CPU than bash job control)
+cat "$URLS_FILE" | xargs -P "$PARALLEL" -I {} bash -c 'do_prewarm "$@"' _ {}
 
-# Stop progress updater first (before wait)
+# Stop progress updater
 kill $PROGRESS_PID 2>/dev/null
 wait $PROGRESS_PID 2>/dev/null
 
-# Wait for remaining curl jobs
-wait
-exec 3<&-
+# Final stats (optimized using single awk call)
+final_stats=$(awk -F'|' '
+    BEGIN { ok=0; hit=0; miss=0; exp=0; fail=0 }
+    /^OK\|/ { ok++ }
+    /^FAIL\|/ { fail++ }
+    /\|HIT\|/ { hit++ }
+    /\|MISS\|/ { miss++ }
+    /\|EXPIRED\|/ { exp++ }
+    END { print ok+fail, hit, miss, exp, fail }
+' "$STATS_FILE" 2>/dev/null)
 
-# Final stats
-PROGRESS=$(wc -l < "$STATS_FILE" 2>/dev/null | tr -d ' ')
-HIT=$(grep -c "|HIT|" "$STATS_FILE" 2>/dev/null || echo 0)
-MISS=$(grep -c "|MISS|" "$STATS_FILE" 2>/dev/null || echo 0)
-EXPIRED=$(grep -c "|EXPIRED|" "$STATS_FILE" 2>/dev/null || echo 0)
-FAILED=$(grep -c "^FAIL|" "$STATS_FILE" 2>/dev/null || echo 0)
+read PROGRESS HIT MISS EXPIRED FAILED <<< "$final_stats"
+PROGRESS=${PROGRESS:-0}
+HIT=${HIT:-0}
+MISS=${MISS:-0}
+EXPIRED=${EXPIRED:-0}
+FAILED=${FAILED:-0}
 
 # Get unique CF POPs
 CF_POPS=$(sort -u "$POP_FILE" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
 
-# Per-variant stats
+# Per-variant stats (optimized - single pass through file)
 log ""
 log "=========================================="
 log "Per-Variant Stats:"
 log "------------------------------------------"
 
-# Build variant stats JSON
-VARIANT_STATS="["
-FIRST_VARIANT=true
+# Build variant stats JSON using single awk pass
+VARIANT_STATS=$(awk -F'|' '
+    BEGIN { first=1 }
+    {
+        variant = $4
+        if (variant == "") next
+        
+        total[variant]++
+        if ($1 == "FAIL") failed[variant]++
+        if ($2 == "HIT") hit[variant]++
+        else if ($2 == "MISS") miss[variant]++
+        else if ($2 == "EXPIRED") expired[variant]++
+    }
+    END {
+        printf "["
+        for (v in total) {
+            if (!first) printf ","
+            first = 0
+            h = hit[v]+0
+            m = miss[v]+0
+            e = expired[v]+0
+            f = failed[v]+0
+            t = total[v]
+            printf "{\"name\":\"%s\",\"total\":%d,\"hit\":%d,\"miss\":%d,\"expired\":%d,\"failed\":%d}", v, t, h, m, e, f
+        }
+        printf "]"
+    }
+' "$STATS_FILE" 2>/dev/null)
 
-for variant in $(cut -d'|' -f4 "$STATS_FILE" 2>/dev/null | sort -u); do
-    [ -z "$variant" ] && continue
-    
-    v_total=$(grep "|${variant}$" "$STATS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    v_hit=$(grep "|HIT|.*|${variant}$" "$STATS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    v_miss=$(grep "|MISS|.*|${variant}$" "$STATS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    v_expired=$(grep "|EXPIRED|.*|${variant}$" "$STATS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    v_failed=$(grep "^FAIL|.*|${variant}$" "$STATS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-    
-    if [ "$v_total" -gt 0 ]; then
-        v_hitrate=$(awk "BEGIN {printf \"%.1f\", ($v_hit / $v_total) * 100}")
-    else
-        v_hitrate="0.0"
-    fi
-    
-    log "  $variant: $v_total total | HIT $v_hit | MISS $v_miss | ${v_hitrate}%"
-    
-    # Add to JSON
-    if [ "$FIRST_VARIANT" = true ]; then
-        FIRST_VARIANT=false
-    else
-        VARIANT_STATS="$VARIANT_STATS,"
-    fi
-    VARIANT_STATS="$VARIANT_STATS{\"name\":\"$variant\",\"total\":$v_total,\"hit\":$v_hit,\"miss\":$v_miss,\"expired\":$v_expired,\"failed\":$v_failed}"
-done
-VARIANT_STATS="$VARIANT_STATS]"
+# Print variant stats to log
+awk -F'|' '
+    {
+        variant = $4
+        if (variant == "") next
+        total[variant]++
+        if ($2 == "HIT") hit[variant]++
+        else if ($2 == "MISS") miss[variant]++
+    }
+    END {
+        for (v in total) {
+            t = total[v]
+            h = hit[v]+0
+            m = miss[v]+0
+            if (t > 0) rate = (h / t) * 100
+            else rate = 0
+            printf "  %s: %d total | HIT %d | MISS %d | %.1f%%\n", v, t, h, m, rate
+        }
+    }
+' "$STATS_FILE" 2>/dev/null | while read line; do log "$line"; done
 
 log "------------------------------------------"
 log "CF Cache Locations: ${CF_POPS:-none}"

@@ -4,9 +4,28 @@
 
 ## 🚀 Installation
 
+### วิธีที่ 1: ติดตั้งจาก Git (แนะนำ)
+
+```bash
+git clone https://github.com/vdohide-server/prewarm-cli.git
+cd prewarm-cli
+chmod +x install.sh
+sudo ./install.sh
+```
+
+### วิธีที่ 2: ติดตั้งแบบ Manual
+
 ```bash
 cd prewarm-cli
 chmod +x install.sh
+sudo ./install.sh
+```
+
+## 🔄 Update
+
+```bash
+cd prewarm-cli
+git pull
 sudo ./install.sh
 ```
 
