@@ -1,16 +1,11 @@
 #!/usr/bin/env node
 // ============================================
-// Prewarm Worker - Node.js Version
-// - Low CPU usage with async/await
-// - HTTP Keep-Alive connection pooling
-// - Efficient parallel processing
+// Prewarm Worker - Node.js + Axios Version
 // ============================================
 
-const https = require('https');
-const http = require('http');
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { URL } = require('url');
 
 // Arguments
 const JOB_ID = process.argv[2];
@@ -23,7 +18,10 @@ const RUNNING_DIR = `${PREWARM_DIR}/running`;
 const JOB_FILE = `${RUNNING_DIR}/${JOB_ID}.job`;
 
 // Configuration
-const TIMEOUT = 5000;
+const TIMEOUT = 10000;
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+};
 
 // Stats
 let stats = {
@@ -34,19 +32,6 @@ let stats = {
     expired: 0,
     failed: 0
 };
-
-// HTTP Agent with Keep-Alive (connection pooling)
-const httpsAgent = new https.Agent({
-    keepAlive: true,
-    maxSockets: PARALLEL,
-    timeout: TIMEOUT
-});
-
-const httpAgent = new http.Agent({
-    keepAlive: true,
-    maxSockets: PARALLEL,
-    timeout: TIMEOUT
-});
 
 // Logging
 function log(msg) {
@@ -72,88 +57,53 @@ function updateJob() {
     }
 }
 
-// HEAD request using native http/https
-function headRequest(url) {
-    return new Promise((resolve) => {
-        const startTime = Date.now();
-        const urlObj = new URL(url);
-        const agent = urlObj.protocol === 'https:' ? httpsAgent : httpAgent;
-        const lib = urlObj.protocol === 'https:' ? https : http;
-        
-        const req = lib.request({
-            method: 'HEAD',
-            hostname: urlObj.hostname,
-            port: urlObj.port,
-            path: urlObj.pathname + urlObj.search,
-            agent: agent,
+// HEAD request using axios
+async function headRequest(url) {
+    const startTime = Date.now();
+    try {
+        const res = await axios.head(url, {
+            headers: HEADERS,
             timeout: TIMEOUT,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        }, (res) => {
-            const elapsed = Date.now() - startTime;
-            const cacheStatus = res.headers['cf-cache-status'] || 'NONE';
-            const cfRay = res.headers['cf-ray'] || '';
-            const pop = cfRay.split('-')[1] || 'UNK';
-            
-            resolve({
-                url,
-                code: res.statusCode,
-                cache: cacheStatus,
-                pop: pop,
-                time: elapsed
-            });
+            validateStatus: () => true
         });
+        const elapsed = Date.now() - startTime;
+        const cacheStatus = res.headers['cf-cache-status'] || 'NONE';
+        const cfRay = res.headers['cf-ray'] || '';
+        const pop = cfRay.split('-')[1] || 'UNK';
         
-        req.on('error', () => {
-            resolve({
-                url,
-                code: 0,
-                cache: 'NONE',
-                pop: 'UNK',
-                time: Date.now() - startTime
-            });
-        });
-        
-        req.on('timeout', () => {
-            req.destroy();
-            resolve({
-                url,
-                code: 0,
-                cache: 'NONE',
-                pop: 'UNK',
-                time: TIMEOUT
-            });
-        });
-        
-        req.end();
-    });
+        return {
+            url,
+            code: res.status,
+            cache: cacheStatus,
+            pop: pop,
+            time: elapsed
+        };
+    } catch (e) {
+        return {
+            url,
+            code: 0,
+            cache: 'NONE',
+            pop: 'UNK',
+            time: Date.now() - startTime
+        };
+    }
 }
 
 // Fetch URL content (for playlists)
-function fetchContent(url) {
-    return new Promise((resolve, reject) => {
-        const urlObj = new URL(url);
-        const lib = urlObj.protocol === 'https:' ? https : http;
-        
-        lib.get(url, {
-            timeout: TIMEOUT,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        }, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => resolve(data));
-        }).on('error', reject);
+async function fetchContent(url) {
+    const res = await axios.get(url, {
+        headers: HEADERS,
+        timeout: TIMEOUT
     });
+    return res.data;
 }
 
 // Build full URL
 function buildUrl(segment, baseUrl) {
     if (segment.startsWith('http')) return segment;
-    if (segment.startsWith('//')) return new URL(baseUrl).protocol + segment;
-    if (segment.startsWith('/')) return new URL(baseUrl).origin + segment;
+    const base = new URL(baseUrl);
+    if (segment.startsWith('//')) return base.protocol + segment;
+    if (segment.startsWith('/')) return base.origin + segment;
     return new URL(segment, baseUrl).href;
 }
 
@@ -296,10 +246,6 @@ async function main() {
     }
     log('==========================================');
     log('Completed!');
-    
-    // Cleanup
-    httpsAgent.destroy();
-    httpAgent.destroy();
 }
 
 main().catch(e => {

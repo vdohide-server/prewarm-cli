@@ -28,6 +28,11 @@ if ! command -v node &> /dev/null; then
 fi
 echo "✓ Node.js version: $(node --version)"
 
+# Install axios globally
+echo "Installing axios..."
+npm install -g axios 2>/dev/null || npm install axios --prefix /usr/local/lib 2>/dev/null
+echo "✓ Axios installed"
+
 # Create data directories
 echo "Creating directories..."
 mkdir -p "$DATA_DIR"/{queue,running,completed,logs}
