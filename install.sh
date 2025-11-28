@@ -65,10 +65,19 @@ if [ ! -f "$DATA_DIR/config" ]; then
 # Prewarm Configuration
 
 # จำนวน job ที่รันพร้อมกันได้
-MAX_CONCURRENT=2
+MAX_CONCURRENT=5
 
 # Default parallel requests per job
 DEFAULT_PARALLEL=20
+
+# Base domain for URL generation
+BASE_DOMAIN=media.vdohls.com
+
+# API endpoint
+API_ENDPOINT=https://service.vdohide.dev/prewarm
+
+# API token (optional)
+API_TOKEN=
 EOF
 fi
 
@@ -86,8 +95,22 @@ echo "Configuration:"
 echo "  prewarm config MAX_CONCURRENT 3    # รัน 3 jobs พร้อมกัน"
 echo "  prewarm config DEFAULT_PARALLEL 50 # 50 parallel per job"
 echo ""
-echo "Start daemon:"
-echo "  prewarm start"
+
+# Start or restart daemon
+PID_FILE="$DATA_DIR/daemon.pid"
+if [ -f "$PID_FILE" ]; then
+    old_pid=$(cat "$PID_FILE")
+    if ps -p "$old_pid" > /dev/null 2>&1; then
+        echo "Restarting daemon..."
+        kill "$old_pid" 2>/dev/null || true
+        sleep 1
+    fi
+fi
+
+echo "Starting daemon..."
+nohup "$INSTALL_DIR/prewarm-daemon" >> "$DATA_DIR/logs/daemon.log" 2>&1 &
+echo $! > "$PID_FILE"
+echo "✓ Daemon started (PID: $(cat $PID_FILE))"
 echo ""
 echo "Uninstall:"
 echo "  sudo ./uninstall.sh"

@@ -65,7 +65,7 @@ prewarm setup
 
 จะถาม:
 - **BASE_DOMAIN** - เช่น `media.vdohls.com` (ใช้สร้าง URL อัตโนมัติจาก ID)
-- **API_ENDPOINT** - เช่น `https://api.example.com/prewarm` (รับ/ส่ง job)
+- **API_ENDPOINT** - เช่น `https://service.vdohide.dev/prewarm` (รับ/ส่ง job)
 - **API_TOKEN** - สำหรับ Authorization (optional)
 
 ## 📖 Usage
