@@ -11,6 +11,23 @@ DATA_DIR="/var/lib/prewarm"
 
 echo "Installing Prewarm CLI..."
 
+# Check Node.js
+if ! command -v node &> /dev/null; then
+    echo "⚠️  Node.js is not installed. Installing..."
+    if command -v apt-get &> /dev/null; then
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+        apt-get install -y nodejs
+    elif command -v yum &> /dev/null; then
+        curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
+        yum install -y nodejs
+    else
+        echo "❌ Cannot install Node.js automatically. Please install Node.js manually."
+        echo "   Visit: https://nodejs.org/"
+        exit 1
+    fi
+fi
+echo "✓ Node.js version: $(node --version)"
+
 # Create data directories
 echo "Creating directories..."
 mkdir -p "$DATA_DIR"/{queue,running,completed,logs}
@@ -20,6 +37,7 @@ echo "Installing scripts..."
 cp "$SCRIPT_DIR/prewarm" "$INSTALL_DIR/prewarm"
 cp "$SCRIPT_DIR/prewarm-daemon" "$INSTALL_DIR/prewarm-daemon"
 cp "$SCRIPT_DIR/prewarm-worker.sh" "$INSTALL_DIR/prewarm-worker.sh"
+cp "$SCRIPT_DIR/prewarm-worker.js" "$INSTALL_DIR/prewarm-worker.js"
 
 # Fix line endings (Windows CRLF to Unix LF)
 sed -i 's/\r$//' "$INSTALL_DIR/prewarm"
@@ -30,6 +48,7 @@ sed -i 's/\r$//' "$INSTALL_DIR/prewarm-worker.sh"
 chmod +x "$INSTALL_DIR/prewarm"
 chmod +x "$INSTALL_DIR/prewarm-daemon"
 chmod +x "$INSTALL_DIR/prewarm-worker.sh"
+chmod +x "$INSTALL_DIR/prewarm-worker.js"
 
 # Create default config
 if [ ! -f "$DATA_DIR/config" ]; then

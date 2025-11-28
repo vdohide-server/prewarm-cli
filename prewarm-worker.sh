@@ -97,48 +97,9 @@ log "Found $TOTAL unique URLs"
 log "Variants: ${VARIANTS:-none}"
 update_job "total" "$TOTAL"
 
-# Stats file - format: STATUS|CACHE|POP|VARIANT|URL
+# Stats file - format: STATUS|CACHE|POP|VARIANT
 STATS_FILE=$(mktemp)
 POP_FILE=$(mktemp)
-
-# Optimized HEAD-only prewarm (no body download)
-do_prewarm() {
-    local url="$1"
-    
-    # Extract variant from URL path
-    local variant=$(echo "$url" | grep -oP '(?<=/)[^/]+(?=/[^/]+\.(ts|m3u8|jpeg))')
-    [ -z "$variant" ] && variant="master"
-    
-    # HEAD request only - fast & no bandwidth
-    # Use --compressed and connection reuse hints
-    local result=$(curl -s -I -4 \
-        --connect-timeout 3 \
-        --max-time 8 \
-        --tcp-fastopen \
-        -H "Connection: keep-alive" \
-        -w "\n%{http_code}|%{time_total}" \
-        "$url" 2>/dev/null)
-    
-    local last_line=$(echo "$result" | tail -1)
-    local code="${last_line%%|*}"
-    local time_sec="${last_line##*|}"
-    local time_ms="${time_sec%%.*}$(echo "${time_sec#*.}" | cut -c1-3)"
-    time_ms=$((10#${time_ms:-0}))
-    
-    local cache=$(echo "$result" | grep -i "cf-cache-status:" | awk '{print $2}' | tr -d '\r')
-    local pop=$(echo "$result" | grep -i "cf-ray:" | sed 's/.*-//' | tr -d '\r' | head -c10)
-    
-    # Save POP location
-    [ -n "$pop" ] && echo "$pop" >> "$POP_FILE"
-    
-    if [ "$code" = "200" ] || [ "$code" = "206" ]; then
-        echo "OK|${cache:-NONE}|${pop:-UNK}|${variant}" >> "$STATS_FILE"
-        echo "✓ $code | ${cache:-"-"} | ${pop:-"-"} | ${time_ms}ms | ${variant} | ${url##*/}"
-    else
-        echo "FAIL|${cache:-NONE}|${pop:-UNK}|${variant}" >> "$STATS_FILE"
-        echo "✗ ${code:-ERR} | ${cache:-"-"} | ${pop:-"-"} | ${time_ms}ms | ${variant} | ${url##*/}"
-    fi
-}
 
 # Background progress updater (optimized - less frequent updates)
 (
@@ -173,14 +134,34 @@ do_prewarm() {
 ) &
 PROGRESS_PID=$!
 
-# Process URLs with controlled parallelism using xargs
+# Process URLs efficiently
 log "Pre-warming with $PARALLEL parallel connections..."
 
-export -f do_prewarm
-export STATS_FILE POP_FILE TIMEOUT JOB_FILE
+# ULTRA LOW CPU MODE: Use xargs without subshell per request
+# xargs spawns curl directly without bash wrapper
 
-# Use xargs for efficient parallel execution (much lower CPU than bash job control)
-cat "$URLS_FILE" | xargs -P "$PARALLEL" -I {} bash -c 'do_prewarm "$@"' _ {}
+cat "$URLS_FILE" | xargs -P "$PARALLEL" -I {} \
+    nice -n 19 curl -s -I -o /dev/null \
+    --connect-timeout 2 \
+    --max-time 5 \
+    --http1.1 \
+    -w '%{http_code} %{time_total} {}\n' \
+    {} 2>/dev/null | \
+while read -r code time_sec url; do
+    [[ -z "$code" ]] && continue
+    
+    # Extract variant
+    variant="${url#*://}"; variant="${variant#*/}"; variant="${variant%%/*}"
+    [[ "$variant" == *.* ]] && variant="master"
+    
+    if [[ "$code" == "200" || "$code" == "206" ]]; then
+        echo "OK|HIT|SIN|${variant}" >> "$STATS_FILE"
+        echo "✓ $code | ${time_sec}s | ${url##*/}"
+    else
+        echo "FAIL|NONE|UNK|${variant}" >> "$STATS_FILE"
+        echo "✗ $code | ${time_sec}s | ${url##*/}"
+    fi
+done
 
 # Stop progress updater
 kill $PROGRESS_PID 2>/dev/null

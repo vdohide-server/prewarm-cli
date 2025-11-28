@@ -10,7 +10,8 @@ RUNNING_DIR="$PREWARM_DIR/running"
 COMPLETED_DIR="$PREWARM_DIR/completed"
 LOG_DIR="$PREWARM_DIR/logs"
 CONFIG_FILE="$PREWARM_DIR/config"
-WORKER_SCRIPT="/usr/local/bin/prewarm-worker.sh"
+WORKER_SCRIPT_JS="/usr/local/bin/prewarm-worker.js"
+WORKER_SCRIPT_SH="/usr/local/bin/prewarm-worker.sh"
 
 # Default config
 MAX_CONCURRENT=2
@@ -209,7 +210,12 @@ while true; do
         url=$(grep -o '"url": "[^"]*"' "$job_file" | cut -d'"' -f4)
         parallel=$(grep -o '"parallel": [0-9]*' "$job_file" | awk '{print $2}')
         
-        "$WORKER_SCRIPT" "$id" "$url" "$parallel" >> "$LOG_DIR/$id.log" 2>&1 &
+        # Use Node.js worker if available, fallback to bash
+        if command -v node &> /dev/null && [ -f "$WORKER_SCRIPT_JS" ]; then
+            node "$WORKER_SCRIPT_JS" "$id" "$url" "$parallel" >> "$LOG_DIR/$id.log" 2>&1 &
+        else
+            "$WORKER_SCRIPT_SH" "$id" "$url" "$parallel" >> "$LOG_DIR/$id.log" 2>&1 &
+        fi
         worker_pid=$!
         echo "$worker_pid" > "$RUNNING_DIR/$id.pid"
         

@@ -2,6 +2,12 @@
 
 ระบบ Queue สำหรับ HLS Cache Warming
 
+## 📋 Requirements
+
+- **Node.js** - LTS version (จะติดตั้งอัตโนมัติถ้าไม่มี)
+- **curl** - สำหรับ fetch URLs
+- **bash** - Shell environment
+
 ## 🚀 Installation
 
 ### วิธีที่ 1: ติดตั้งจาก Git (แนะนำ)
@@ -13,7 +19,26 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-### วิธีที่ 2: ติดตั้งแบบ Manual
+> 💡 ถ้าไม่มี Node.js จะถูกติดตั้งอัตโนมัติ
+
+### วิธีที่ 2: ติดตั้ง Node.js ก่อน (ถ้าต้องการ)
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# CentOS/RHEL
+curl -fsSL https://rpm.nodesource.com/setup_lts.x | sudo bash -
+sudo yum install -y nodejs
+
+# ตรวจสอบ
+node --version
+```
+
+จากนั้นรัน install.sh
+
+### วิธีที่ 3: ติดตั้งแบบ Manual
 
 ```bash
 cd prewarm-cli
@@ -53,7 +78,7 @@ prewarm add h_A8yW-KTJql3
 prewarm add https://vdohls.com/new-1/master.m3u8
 
 # กำหนด parallel
-prewarm add l9qfjn7xpi 50
+prewarm add l9qfjn7xpi 1
 
 # Output:
 # Building URL: https://media.vdohls.com/h_A8yW-KTJql3/playlist.m3u8
