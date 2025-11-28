@@ -1,0 +1,221 @@
+#!/bin/bash
+# ============================================
+# Prewarm Daemon - Background Queue Processor
+# ============================================
+
+# Configuration
+PREWARM_DIR="/var/lib/prewarm"
+QUEUE_DIR="$PREWARM_DIR/queue"
+RUNNING_DIR="$PREWARM_DIR/running"
+COMPLETED_DIR="$PREWARM_DIR/completed"
+LOG_DIR="$PREWARM_DIR/logs"
+CONFIG_FILE="$PREWARM_DIR/config"
+WORKER_SCRIPT="/usr/local/bin/prewarm-worker.sh"
+
+# Default config
+MAX_CONCURRENT=2
+API_ENDPOINT=""
+API_TOKEN=""
+BASE_DOMAIN=""
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_DIR/daemon.log"
+}
+
+# Send stats to API endpoint when job completes
+send_stats() {
+    local job_file="$1"
+    
+    if [ -z "$API_ENDPOINT" ]; then
+        return 0
+    fi
+    
+    local id=$(grep -o '"id": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local url=$(grep -o '"url": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local total=$(grep -o '"total": [0-9]*' "$job_file" | awk '{print $2}')
+    local hit=$(grep -o '"hit": [0-9]*' "$job_file" | awk '{print $2}')
+    local miss=$(grep -o '"miss": [0-9]*' "$job_file" | awk '{print $2}')
+    local expired=$(grep -o '"expired": [0-9]*' "$job_file" | awk '{print $2}')
+    local failed=$(grep -o '"failed": [0-9]*' "$job_file" | awk '{print $2}')
+    local started=$(grep -o '"started": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local completed=$(grep -o '"completed": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local cf_pops=$(grep -o '"cf_pops": "[^"]*"' "$job_file" | cut -d'"' -f4)
+    local variants=$(grep -o '"variants": \[.*\]' "$job_file" | sed 's/"variants": //')
+    
+    local auth_header=""
+    if [ -n "$API_TOKEN" ]; then
+        auth_header="-H \"Authorization: Bearer $API_TOKEN\""
+    fi
+    
+    log "Sending stats for job $id to API"
+    
+    # Send POST request with stats including cf_pops and variants
+    curl -s -X POST "$API_ENDPOINT/complete" \
+        -H "Content-Type: application/json" \
+        $auth_header \
+        -d "{
+            \"job_id\": \"$id\",
+            \"url\": \"$url\",
+            \"total\": ${total:-0},
+            \"hit\": ${hit:-0},
+            \"miss\": ${miss:-0},
+            \"expired\": ${expired:-0},
+            \"failed\": ${failed:-0},
+            \"started\": \"$started\",
+            \"completed\": \"$completed\",
+            \"cf_pops\": \"${cf_pops:-}\",
+            \"variants\": ${variants:-[]}
+        }" > /dev/null 2>&1 || log "Failed to send stats for job $id"
+}
+
+# Fetch queue from API endpoint
+fetch_queue_from_api() {
+    if [ -z "$API_ENDPOINT" ]; then
+        return 0
+    fi
+    
+    local auth_header=""
+    if [ -n "$API_TOKEN" ]; then
+        auth_header="-H \"Authorization: Bearer $API_TOKEN\""
+    fi
+    
+    log "Fetching queue from API"
+    
+    # Fetch from API
+    local response=$(curl -s -X GET "$API_ENDPOINT/queue" \
+        -H "Content-Type: application/json" \
+        $auth_header 2>/dev/null || echo "")
+    
+    if [ -z "$response" ] || [ "$response" = "[]" ] || [ "$response" = "null" ]; then
+        return 0
+    fi
+    
+    # Parse JSON array and add jobs
+    # Expected format: [{"id": "xxx", "parallel": 20}, ...]
+    echo "$response" | grep -oP '\{[^}]+\}' | while read -r job; do
+        local job_id=$(echo "$job" | grep -oP '"id"\s*:\s*"\K[^"]+')
+        local parallel=$(echo "$job" | grep -oP '"parallel"\s*:\s*\K[0-9]+')
+        
+        if [ -n "$job_id" ] && [ -n "$BASE_DOMAIN" ]; then
+            local url="https://$BASE_DOMAIN/$job_id/playlist.m3u8"
+            local internal_id=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+            local job_file="$QUEUE_DIR/$internal_id.job"
+            
+            # Check if URL already exists
+            local exists=false
+            for f in "$QUEUE_DIR"/*.job "$RUNNING_DIR"/*.job; do
+                [ -f "$f" ] || continue
+                if grep -q "\"url\": \"$url\"" "$f" 2>/dev/null; then
+                    exists=true
+                    break
+                fi
+            done
+            
+            if [ "$exists" = false ]; then
+                cat > "$job_file" << EOF
+{
+  "id": "$internal_id",
+  "url": "$url",
+  "parallel": ${parallel:-20},
+  "status": "pending",
+  "progress": 0,
+  "total": 0,
+  "hit": 0,
+  "miss": 0,
+  "expired": 0,
+  "failed": 0,
+  "created": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "started": "",
+  "completed": ""
+}
+EOF
+                log "Added job from API: $job_id -> $internal_id"
+            fi
+        fi
+    done
+}
+
+# Handle signals
+cleanup() {
+    log "Daemon stopping..."
+    exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+# Main
+log "Daemon started"
+
+# Counter for API fetch interval
+fetch_counter=0
+
+while true; do
+    # Load config
+    [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+    
+    # Check for completed jobs
+    shopt -s nullglob
+    for pid_file in "$RUNNING_DIR"/*.pid; do
+        [ -f "$pid_file" ] || continue
+        id=$(basename "$pid_file" .pid)
+        pid=$(cat "$pid_file" 2>/dev/null)
+        
+        if [ -n "$pid" ] && ! ps -p "$pid" > /dev/null 2>&1; then
+            log "Job $id completed"
+            job_file="$RUNNING_DIR/$id.job"
+            if [ -f "$job_file" ]; then
+                completed_time=$(date '+%Y-%m-%d %H:%M:%S')
+                sed -i 's|"status": "running"|"status": "completed"|' "$job_file"
+                sed -i "s|\"completed\": \"\"|\"completed\": \"${completed_time}\"|" "$job_file"
+                
+                # Send stats to API before moving
+                send_stats "$job_file"
+                
+                mv "$job_file" "$COMPLETED_DIR/"
+            fi
+            rm -f "$pid_file"
+        fi
+    done
+    shopt -u nullglob
+    
+    # Count running and pending jobs
+    running=$(ls -1 "$RUNNING_DIR"/*.job 2>/dev/null | wc -l)
+    pending=$(ls -1 "$QUEUE_DIR"/*.job 2>/dev/null | wc -l)
+    
+    # Fetch from API if queue is empty (every 10 iterations = ~30 seconds)
+    fetch_counter=$((fetch_counter + 1))
+    if [ "$pending" -eq 0 ] && [ "$running" -eq 0 ] && [ "$fetch_counter" -ge 10 ]; then
+        fetch_queue_from_api
+        fetch_counter=0
+    fi
+    
+    # Start new jobs if capacity available
+    while [ "$running" -lt "$MAX_CONCURRENT" ]; do
+        next_job=$(ls -1t "$QUEUE_DIR"/*.job 2>/dev/null | head -1)
+        [ -z "$next_job" ] && break
+        
+        # Process job
+        job_name=$(basename "$next_job")
+        id="${job_name%.job}"
+        
+        log "Starting job: $id"
+        
+        mv "$next_job" "$RUNNING_DIR/"
+        job_file="$RUNNING_DIR/$job_name"
+        
+        started_time=$(date '+%Y-%m-%d %H:%M:%S')
+        sed -i 's|"status": "pending"|"status": "running"|' "$job_file"
+        sed -i "s|\"started\": \"\"|\"started\": \"${started_time}\"|" "$job_file"
+        
+        url=$(grep -o '"url": "[^"]*"' "$job_file" | cut -d'"' -f4)
+        parallel=$(grep -o '"parallel": [0-9]*' "$job_file" | awk '{print $2}')
+        
+        "$WORKER_SCRIPT" "$id" "$url" "$parallel" >> "$LOG_DIR/$id.log" 2>&1 &
+        worker_pid=$!
+        echo "$worker_pid" > "$RUNNING_DIR/$id.pid"
+        
+        log "Job $id started with PID $worker_pid"
+        running=$((running + 1))
+    done
+    
+    sleep 3
+done

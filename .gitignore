@@ -1,0 +1,11 @@
+# Test files
+urls.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
