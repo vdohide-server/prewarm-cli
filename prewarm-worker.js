@@ -3,9 +3,26 @@
 // Prewarm Worker - Node.js + Axios Version
 // ============================================
 
-const axios = require('axios');
+// Try to load axios from multiple locations
+let axios;
+try {
+    axios = require('axios');
+} catch (e) {
+    try {
+        axios = require('/usr/local/bin/node_modules/axios');
+    } catch (e2) {
+        try {
+            axios = require('/usr/local/lib/node_modules/axios');
+        } catch (e3) {
+            console.error('ERROR: axios not found. Run: sudo npm install -g axios');
+            process.exit(1);
+        }
+    }
+}
+
 const fs = require('fs');
 const path = require('path');
+const { URL } = require('url');
 
 // Arguments
 const JOB_ID = process.argv[2];
@@ -67,22 +84,18 @@ async function headRequest(url) {
             validateStatus: () => true
         });
         const elapsed = Date.now() - startTime;
-        const cacheStatus = res.headers['cf-cache-status'] || 'NONE';
-        const cfRay = res.headers['cf-ray'] || '';
-        const pop = cfRay.split('-')[1] || 'UNK';
-        
         return {
             url,
             code: res.status,
-            cache: cacheStatus,
-            pop: pop,
+            cache: res.headers['cf-cache-status'] || 'NONE',
+            pop: (res.headers['cf-ray'] || '').split('-')[1] || 'UNK',
             time: elapsed
         };
     } catch (e) {
         return {
             url,
             code: 0,
-            cache: 'NONE',
+            cache: 'ERR',
             pop: 'UNK',
             time: Date.now() - startTime
         };
@@ -101,9 +114,11 @@ async function fetchContent(url) {
 // Build full URL
 function buildUrl(segment, baseUrl) {
     if (segment.startsWith('http')) return segment;
-    const base = new URL(baseUrl);
-    if (segment.startsWith('//')) return base.protocol + segment;
-    if (segment.startsWith('/')) return base.origin + segment;
+    if (segment.startsWith('//')) return 'https:' + segment;
+    if (segment.startsWith('/')) {
+        const u = new URL(baseUrl);
+        return u.origin + segment;
+    }
     return new URL(segment, baseUrl).href;
 }
 

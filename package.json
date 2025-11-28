@@ -1,0 +1,9 @@
+{
+  "name": "prewarm-worker",
+  "version": "1.0.0",
+  "description": "HLS Cache Warming Worker",
+  "main": "prewarm-worker.js",
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}

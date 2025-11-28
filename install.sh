@@ -28,14 +28,15 @@ if ! command -v node &> /dev/null; then
 fi
 echo "✓ Node.js version: $(node --version)"
 
-# Install axios globally
-echo "Installing axios..."
-npm install -g axios 2>/dev/null || npm install axios --prefix /usr/local/lib 2>/dev/null
-echo "✓ Axios installed"
-
 # Create data directories
 echo "Creating directories..."
 mkdir -p "$DATA_DIR"/{queue,running,completed,logs}
+
+# Install Node.js dependencies
+echo "Installing dependencies..."
+cd "$SCRIPT_DIR"
+npm install --production
+echo "✓ Dependencies installed"
 
 # Copy scripts
 echo "Installing scripts..."
@@ -43,6 +44,8 @@ cp "$SCRIPT_DIR/prewarm" "$INSTALL_DIR/prewarm"
 cp "$SCRIPT_DIR/prewarm-daemon" "$INSTALL_DIR/prewarm-daemon"
 cp "$SCRIPT_DIR/prewarm-worker.sh" "$INSTALL_DIR/prewarm-worker.sh"
 cp "$SCRIPT_DIR/prewarm-worker.js" "$INSTALL_DIR/prewarm-worker.js"
+cp "$SCRIPT_DIR/package.json" "$INSTALL_DIR/package.json"
+cp -r "$SCRIPT_DIR/node_modules" "$INSTALL_DIR/" 2>/dev/null || true
 
 # Fix line endings (Windows CRLF to Unix LF)
 sed -i 's/\r$//' "$INSTALL_DIR/prewarm"
