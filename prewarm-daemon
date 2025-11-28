@@ -70,7 +70,14 @@ send_stats() {
             \"completed\": \"$completed\",
             \"cf_pops\": \"${cf_pops:-}\",
             \"variants\": ${variants:-[]}
-        }" > /dev/null 2>&1 || log "Failed to send stats for job $id"
+        }" 2>&1
+    
+    local curl_exit=$?
+    if [ $curl_exit -eq 0 ]; then
+        log "Stats sent successfully for job $id"
+    else
+        log "Failed to send stats for job $id (curl exit: $curl_exit)"
+    fi
 }
 
 # Fetch queue from API endpoint

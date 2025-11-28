@@ -50,8 +50,11 @@ sudo ./install.sh
 
 ```bash
 cd prewarm-cli
+git checkout *
 git pull
+chmod +x install.sh
 sudo ./install.sh
+prewarm restart
 ```
 
 ## ⚙️ Setup (ครั้งแรก)
