@@ -178,9 +178,10 @@ async function collectUrls(masterUrl) {
 }
 
 // Process URLs with controlled concurrency
-async function processUrls(urls) {
+async function processUrls(urls, isRetry = false) {
     const queue = [...urls];
     const active = new Set();
+    const retryQueue = []; // URLs to retry (500 or EXPIRED)
     
     async function processOne(url) {
         const result = await headRequest(url);
@@ -191,15 +192,42 @@ async function processUrls(urls) {
         const variant = match ? match[1] : 'master';
         
         if (result.code === 200 || result.code === 206) {
-            if (result.cache === 'HIT') stats.hit++;
-            else if (result.cache === 'MISS') stats.miss++;
-            else if (result.cache === 'EXPIRED') stats.expired++;
-            
-            console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+            if (result.cache === 'HIT') {
+                stats.hit++;
+                console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+            } else if (result.cache === 'MISS') {
+                stats.miss++;
+                console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+            } else if (result.cache === 'EXPIRED') {
+                if (isRetry) {
+                    // Second attempt still EXPIRED, count as expired
+                    stats.expired++;
+                    console.log(`⚠ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+                } else {
+                    // First attempt EXPIRED, add to retry queue
+                    retryQueue.push(url);
+                    console.log(`↻ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)} (retry later)`);
+                }
+            } else {
+                stats.miss++;
+                console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+            }
+        } else if (result.code >= 500) {
+            if (isRetry) {
+                // Second attempt still 500, count as failed
+                stats.failed++;
+                console.log(`✗ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
+            } else {
+                // First attempt 500, add to retry queue
+                retryQueue.push(url);
+                console.log(`↻ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)} (retry later)`);
+            }
         } else {
             stats.failed++;
             console.log(`✗ ${result.code || 'ERR'} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
         }
+        
+        return { url, needsRetry: retryQueue.includes(url) };
     }
     
     // Process with concurrency limit
@@ -218,6 +246,8 @@ async function processUrls(urls) {
             await Promise.race(active);
         }
     }
+    
+    return retryQueue;
 }
 
 // Progress updater
@@ -249,9 +279,17 @@ async function main() {
     updateJob();
     startProgressUpdater();
     
-    // Process
+    // Process - first pass
     log(`Pre-warming with ${PARALLEL} parallel connections...`);
-    await processUrls(urls);
+    const retryUrls = await processUrls(urls, false);
+    
+    // Retry failed URLs (500 or EXPIRED)
+    if (retryUrls.length > 0) {
+        log('');
+        log(`Retrying ${retryUrls.length} URLs (500/EXPIRED)...`);
+        stats.total += retryUrls.length; // Add retry count to total
+        await processUrls(retryUrls, true);
+    }
     
     stopProgressUpdater();
     
