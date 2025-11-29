@@ -37,7 +37,7 @@ const JOB_FILE = `${RUNNING_DIR}/${JOB_ID}.job`;
 // Configuration
 const TIMEOUT = 10000;
 const HEADERS = {
-    'User-Agent': 'Prewarm/2.0'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 };
 
 // Stats
