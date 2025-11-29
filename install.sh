@@ -65,10 +65,10 @@ if [ ! -f "$DATA_DIR/config" ]; then
 # Prewarm Configuration
 
 # จำนวน job ที่รันพร้อมกันได้
-MAX_CONCURRENT=5
+MAX_CONCURRENT=2
 
 # Default parallel requests per job
-DEFAULT_PARALLEL=20
+DEFAULT_PARALLEL=5
 
 # Base domain for URL generation
 BASE_DOMAIN=media.vdohls.com

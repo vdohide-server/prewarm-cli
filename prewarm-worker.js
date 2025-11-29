@@ -181,7 +181,7 @@ async function collectUrls(masterUrl) {
 async function processUrls(urls, isRetry = false) {
     const queue = [...urls];
     const active = new Set();
-    const retryQueue = []; // URLs to retry (500 or EXPIRED)
+    const retryQueue = []; // URLs to retry (500/STALE)
     
     async function processOne(url) {
         const result = await headRequest(url);
@@ -198,27 +198,21 @@ async function processUrls(urls, isRetry = false) {
             } else if (result.cache === 'MISS') {
                 stats.miss++;
                 console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
-            } else if (result.cache === 'EXPIRED') {
-                if (isRetry) {
-                    // Second attempt still EXPIRED, count as expired
-                    stats.expired++;
-                    console.log(`⚠ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
-                } else {
-                    // First attempt EXPIRED, add to retry queue
-                    retryQueue.push(url);
-                    console.log(`↻ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)} (retry later)`);
-                }
+            } else if (result.cache === 'EXPIRED' || result.cache === 'REVALIDATED') {
+                // EXPIRED/REVALIDATED = cache was stale but origin returned 200, now fresh
+                stats.hit++;
+                console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
             } else {
+                // Other cache status (DYNAMIC, BYPASS, etc.)
                 stats.miss++;
                 console.log(`✓ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
             }
-        } else if (result.code >= 500) {
+        } else if (result.code >= 500 || result.cache === 'STALE') {
+            // 500 error or STALE (origin failed during revalidation)
             if (isRetry) {
-                // Second attempt still 500, count as failed
                 stats.failed++;
                 console.log(`✗ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)}`);
             } else {
-                // First attempt 500, add to retry queue
                 retryQueue.push(url);
                 console.log(`↻ ${result.code} | ${result.cache} | ${result.pop} | ${result.time}ms | ${variant} | ${path.basename(url)} (retry later)`);
             }
