@@ -37,7 +37,7 @@ const JOB_FILE = `${RUNNING_DIR}/${JOB_ID}.job`;
 // Configuration
 const TIMEOUT = 10000;
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    'User-Agent': 'Prewarm/2.0'
 };
 
 // Stats
@@ -126,6 +126,10 @@ function buildUrl(segment, baseUrl) {
 async function collectUrls(masterUrl) {
     const urls = new Set([masterUrl]);
     const variants = new Set();
+    
+    // Add poster.jpeg (same folder as master playlist)
+    const posterUrl = masterUrl.replace(/\/[^\/]+\.m3u8$/, '/poster.jpeg');
+    urls.add(posterUrl);
     
     try {
         const master = await fetchContent(masterUrl);
