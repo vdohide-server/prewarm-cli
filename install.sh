@@ -65,7 +65,7 @@ if [ ! -f "$DATA_DIR/config" ]; then
 # Prewarm Configuration
 
 # จำนวน job ที่รันพร้อมกันได้
-MAX_CONCURRENT=2
+MAX_CONCURRENT=5
 
 # Default parallel requests per job
 DEFAULT_PARALLEL=5
