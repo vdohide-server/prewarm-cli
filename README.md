@@ -13,7 +13,7 @@
 ### วิธีที่ 1: ติดตั้งจาก Git (แนะนำ)
 
 ```bash
-git clone https://github.com/vdohide-server/prewarm-cli.git
+git clone https://github.com/avdb-app/prewarm-cli.git
 cd prewarm-cli
 chmod +x install.sh
 sudo ./install.sh
@@ -65,7 +65,7 @@ prewarm setup
 
 จะถาม:
 - **BASE_DOMAIN** - เช่น `media.vdohls.com` (ใช้สร้าง URL อัตโนมัติจาก ID)
-- **API_ENDPOINT** - เช่น `https://service.vdohide.dev/prewarm` (รับ/ส่ง job)
+- **API_ENDPOINT** - เช่น `https://admin.uncenx.com/api/v1/prewarm` (รับ/ส่ง job)
 - **API_TOKEN** - สำหรับ Authorization (optional)
 
 ## 📖 Usage
@@ -182,19 +182,23 @@ prewarm config
 #   BASE_DOMAIN=media.vdohls.com
 #   API_ENDPOINT=https://api.example.com/prewarm
 #   API_TOKEN=***hidden***
+#   REF_DOMAIN=https://ibucket.org/
 ```
 
 ### ตั้งค่า
 
 ```bash
 # รัน 3 jobs พร้อมกัน
-prewarm config MAX_CONCURRENT 3
+prewarm config MAX_CONCURRENT 30 && prewarm restart && prewarm watch
 
 # 50 parallel requests per job
 prewarm config DEFAULT_PARALLEL 50
 
 # เปลี่ยน domain
 prewarm config BASE_DOMAIN cdn.example.com
+
+# ตั้งค่า Referer header
+prewarm config REF_DOMAIN https://ibucket.org/
 
 # หรือใช้ interactive setup
 prewarm setup

@@ -33,12 +33,26 @@ const PARALLEL = parseInt(process.argv[4] || '10', 10);
 const PREWARM_DIR = '/var/lib/prewarm';
 const RUNNING_DIR = `${PREWARM_DIR}/running`;
 const JOB_FILE = `${RUNNING_DIR}/${JOB_ID}.job`;
+const CONFIG_FILE = `${PREWARM_DIR}/config`;
+
+// Load config
+let REF_DOMAIN = '';
+if (fs.existsSync(CONFIG_FILE)) {
+    const config = fs.readFileSync(CONFIG_FILE, 'utf8');
+    const match = config.match(/^REF_DOMAIN=(.*)$/m);
+    if (match) REF_DOMAIN = match[1].trim();
+}
 
 // Configuration
 const TIMEOUT = 10000;
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 };
+
+// Add Referer if configured
+if (REF_DOMAIN) {
+    HEADERS['Referer'] = REF_DOMAIN;
+}
 
 // Stats
 let stats = {

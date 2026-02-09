@@ -71,13 +71,16 @@ MAX_CONCURRENT=5
 DEFAULT_PARALLEL=5
 
 # Base domain for URL generation
-BASE_DOMAIN=media.vdohls.com
+BASE_DOMAIN=uncenxcdn.com
 
 # API endpoint
-API_ENDPOINT=https://service.vdohide.dev/prewarm
+API_ENDPOINT=https://admin.uncenx.com/api/v1/prewarm
 
 # API token (optional)
 API_TOKEN=
+
+# Referer domain (optional)
+REF_DOMAIN=https://ibucket.org/
 EOF
 fi
 

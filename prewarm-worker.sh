@@ -16,9 +16,22 @@ PARALLEL="${3:-5}"
 PREWARM_DIR="/var/lib/prewarm"
 RUNNING_DIR="$PREWARM_DIR/running"
 JOB_FILE="$RUNNING_DIR/$JOB_ID.job"
+CONFIG_FILE="$PREWARM_DIR/config"
+
+# Load config
+REF_DOMAIN=""
+if [ -f "$CONFIG_FILE" ]; then
+    REF_DOMAIN=$(grep "^REF_DOMAIN=" "$CONFIG_FILE" | cut -d'=' -f2)
+fi
 
 # Configuration
 TIMEOUT=10
+
+# Build curl headers
+CURL_HEADERS=""
+if [ -n "$REF_DOMAIN" ]; then
+    CURL_HEADERS="-H 'Referer: $REF_DOMAIN'"
+fi
 
 # Update job file (atomic)
 update_job() {
@@ -52,7 +65,7 @@ build_url() {
 }
 
 # Fetch master playlist
-MASTER=$(curl -s --max-time $TIMEOUT "$URL")
+MASTER=$(curl -s --max-time $TIMEOUT $CURL_HEADERS "$URL")
 [ -z "$MASTER" ] && { log "ERROR: Failed to fetch master playlist"; exit 1; }
 
 # Collect all URLs
@@ -74,7 +87,7 @@ if [ -n "$CHILD_PLAYLISTS" ]; then
         [ -n "$VARIANT" ] && echo "$VARIANT" >> "$VARIANTS_FILE"
         
         CHILD_BASE=$(dirname "$CHILD_URL")
-        curl -s --max-time $TIMEOUT "$CHILD_URL" | grep -E "\.ts$|\.jpeg$|^https?://|^//" | grep -v "^#" | while read -r seg; do
+        curl -s --max-time $TIMEOUT $CURL_HEADERS "$CHILD_URL" | grep -E "\.ts$|\.jpeg$|^https?://|^//" | grep -v "^#" | while read -r seg; do
             [ -n "$seg" ] && echo "$(build_url "$seg" "$CHILD_BASE")" >> "$URLS_FILE"
         done
     done <<< "$CHILD_PLAYLISTS"
@@ -145,6 +158,7 @@ cat "$URLS_FILE" | xargs -P "$PARALLEL" -I {} \
     --connect-timeout 2 \
     --max-time 5 \
     --http1.1 \
+    $CURL_HEADERS \
     -w '%{http_code} %{time_total} {}\n' \
     {} 2>/dev/null | \
 while read -r code time_sec url; do
